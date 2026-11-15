@@ -48,7 +48,6 @@ body {
   font-family: var(--body);
   display: flex; justify-content: center; align-items: flex-start;
   padding: calc(20px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom));
-  overflow-y: auto;
 }
 main { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 18px; }
 h1 { font-family: var(--display); font-weight: 400; font-size: 2.4rem; margin: 0; line-height: 1; text-wrap: balance; letter-spacing: .5px; }
@@ -65,7 +64,7 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
 
 .boardwrap { position: relative; width: 100%; aspect-ratio: 1; background: var(--paper); border-radius: 6px; padding: 10px; box-shadow: 0 0 0 2px var(--grid); }
 .board { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 100%; }
-.cell { appearance: none; background: transparent; border: 0; padding: 10px; cursor: pointer; position: relative; color: inherit; border-radius: 10px; }
+.cell { appearance: none; background: transparent; border: 0; padding: 10px; cursor: pointer; position: relative; color: inherit; border-radius: 10px; -webkit-tap-highlight-color: transparent; }
 .cell:nth-child(3n+1), .cell:nth-child(3n+2) { border-right: 5px solid var(--ink); border-radius: 0; }
 .cell:nth-child(-n+6) { border-bottom: 5px solid var(--ink); border-radius: 0; }
 .cell:focus-visible { outline: 3px dashed var(--win); outline-offset: -6px; }
@@ -89,9 +88,15 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
 .chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .btn { font-weight: 700; padding: 10px 18px; }
 .btn.primary { background: var(--win); border-color: var(--win); color: #1c1407; }
-.chip:focus-visible, .btn:focus-visible { outline: 3px dashed var(--win); outline-offset: 2px; }
+.chip:focus-visible, .btn:focus-visible, .codein:focus-visible { outline: 3px dashed var(--win); outline-offset: 2px; }
 .btn:active, .chip:active { transform: translateY(1px); }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.online { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 2px dashed var(--ink); border-radius: 12px 5px 14px 6px; }
+.online[hidden], .row[hidden], .online [hidden] { display: none; }
+.codein { font-family: var(--display); font-size: 1.5rem; letter-spacing: 4px; text-transform: uppercase; width: 8.5rem; padding: 4px 10px; color: var(--ink); background: var(--paper); border: 2px solid var(--ink); border-radius: 10px 4px 12px 5px; }
+.roomcode { font-family: var(--display); font-size: 2.6rem; letter-spacing: 6px; line-height: 1; color: var(--win); }
+.hint { margin: 0; font-size: .9rem; }
 @media (prefers-reduced-motion: reduce) { .mark.draw, #winline line.go { animation-duration: .01s; animation-delay: 0s !important; } .score { transition: none; } }
 </style>
 </head>
@@ -115,12 +120,35 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
   <section class="controls">
     <div class="row"><span class="lbl">Play vs</span>
       <button class="chip" id="m-cpu" aria-pressed="true">Computer</button>
-      <button class="chip" id="m-two" aria-pressed="false">A friend</button>
+      <button class="chip" id="m-two" aria-pressed="false">Same phone</button>
+      <button class="chip" id="m-net" aria-pressed="false">Online friend</button>
     </div>
     <div class="row" id="diffrow"><span class="lbl">Level</span>
       <button class="chip" id="d-easy" aria-pressed="false">Easy</button>
       <button class="chip" id="d-hard" aria-pressed="true">Unbeatable</button>
     </div>
+
+    <div class="online" id="netpanel" hidden>
+      <div id="net-start">
+        <div class="row">
+          <button class="btn primary" id="create">Create room</button>
+          <span>or join:</span>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input class="codein" id="codein" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
+          <button class="btn" id="join">Join</button>
+        </div>
+      </div>
+      <div id="net-room" hidden>
+        <div class="roomcode" id="roomcode" aria-label="Room code"></div>
+        <p class="hint" id="roomhint"></p>
+        <div class="row">
+          <button class="btn primary" id="share">Share invite link</button>
+          <button class="btn" id="leave">Leave room</button>
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn primary" id="again">New round</button>
       <button class="btn" id="reset">Reset scores</button>
@@ -131,8 +159,10 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
 <script>
 (function () {
   var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  var RELAY = 'https://ntfy.sh/pencil-ttt-';
   var board, turn, over, starter = 'X', mode = 'cpu', level = 'hard', busy = false;
   var score = { X: 0, O: 0, D: 0 };
+  var net = { code: null, me: null, peer: false, es: null, timer: null, id: Math.random().toString(36).slice(2, 10) };
   var $ = function (id) { return document.getElementById(id); };
   var boardEl = $('board'), cells = [];
 
@@ -166,7 +196,6 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
       bd[e[k]] = player;
       var s = minimax(bd, player === 'X' ? 'O' : 'X', me);
       bd[e[k]] = null;
-      // prefer faster wins and slower losses
       s = s > 0 ? s - 1 : s < 0 ? s + 1 : 0;
       best = player === me ? Math.max(best, s) : Math.min(best, s);
     }
@@ -186,14 +215,19 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
   }
 
   function names() {
-    return mode === 'cpu' ? { X: 'You', O: 'Computer' } : { X: 'Player X', O: 'Player O' };
+    if (mode === 'cpu') return { X: 'You', O: 'Computer' };
+    if (mode === 'net') return net.me === 'O' ? { X: 'Friend', O: 'You' } : { X: 'You', O: 'Friend' };
+    return { X: 'Player X', O: 'Player O' };
   }
+  function myTurnOnline() { return net.peer && turn === net.me; }
+
   function render(animateIdx) {
     cells.forEach(function (c, i) {
       var v = board[i];
       c.innerHTML = v ? (v === 'X' ? X_SVG : O_SVG) : '';
       if (v && i !== animateIdx) c.querySelectorAll('.draw').forEach(function (p) { p.classList.remove('draw'); });
-      c.disabled = !!v || over || busy;
+      var locked = mode === 'net' && !myTurnOnline();
+      c.disabled = !!v || over || busy || locked;
       c.setAttribute('aria-label', 'Row ' + (Math.floor(i / 3) + 1) + ' column ' + (i % 3 + 1) + ', ' + (v || 'empty'));
     });
     var n = names();
@@ -204,11 +238,15 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
   }
   function setStatus(t) { $('status').textContent = t; }
 
+  function clearWin() {
+    var wl = $('wl'); wl.classList.remove('go');
+    ['x1', 'y1', 'x2', 'y2'].forEach(function (a) { wl.setAttribute(a, 0); });
+    cells.forEach(function (c) { c.classList.remove('dim'); });
+  }
+  function resetBoard() { board = Array(9).fill(null); over = false; busy = false; turn = starter; clearWin(); }
+
   function newRound() {
-    board = Array(9).fill(null); over = false; busy = false;
-    turn = starter;
-    var wl = $('wl'); wl.classList.remove('go'); wl.setAttribute('x2', 0); wl.setAttribute('y2', 0);
-    wl.setAttribute('x1', 0); wl.setAttribute('y1', 0);
+    resetBoard();
     render();
     announceTurn();
     starter = starter === 'X' ? 'O' : 'X';
@@ -216,24 +254,35 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
   }
   function announceTurn() {
     var n = names();
-    setStatus(mode === 'cpu' ? (turn === 'X' ? 'Your move' : 'Computer is thinking…') : n[turn] + ', your move');
+    if (mode === 'cpu') setStatus(turn === 'X' ? 'Your move' : 'Computer is thinking…');
+    else if (mode === 'net') netStatus();
+    else setStatus(n[turn] + ', your move');
+  }
+  function netStatus() {
+    if (over) return;
+    if (!net.code) setStatus('Create a room or join with a code');
+    else if (!net.peer) setStatus(net.me === 'X' ? 'Waiting for your friend…' : 'Connecting to the room…');
+    else setStatus(turn === net.me ? 'Your move (' + net.me + ')' : "Friend's move…");
+  }
+  function showWin(w) {
+    var n = names();
+    if (mode === 'cpu') setStatus(w.p === 'X' ? 'You win!' : 'Computer wins');
+    else setStatus(mode === 'net' ? (n[w.p] === 'You' ? 'You win!' : 'Friend wins') : n[w.p] + ' wins!');
   }
   function place(i) {
     board[i] = turn;
     var w = winnerOf(board);
     if (w) {
       over = true; score[w.p]++;
-      var n = names();
-      setStatus(mode === 'cpu' ? (w.p === 'X' ? 'You win!' : 'Computer wins') : n[w.p] + ' wins!');
+      showWin(w);
       render(i); drawWin(w.line);
       cells.forEach(function (c, k) { c.classList.toggle('dim', w.line.indexOf(k) < 0); });
-      render(i); return;
+      return;
     }
     if (!empties(board).length) {
       over = true; score.D++; setStatus("It's a draw"); render(i); return;
     }
     turn = turn === 'X' ? 'O' : 'X';
-    cells.forEach(function (c) { c.classList.remove('dim'); });
     render(i); announceTurn();
   }
   function drawWin(line) {
@@ -250,40 +299,179 @@ h1 span.x { color: var(--x); } h1 span.o { color: var(--o); }
   function cpuTurn() {
     busy = true; render();
     setTimeout(function () {
-      if (over) return;
+      if (over || mode !== 'cpu') return;
       busy = false; place(cpuMove());
     }, 450);
   }
+  function buzz() { try { navigator.vibrate && navigator.vibrate(12); } catch (e) {} }
   function onCell(e) {
     var i = +e.currentTarget.dataset.i;
     if (over || busy || board[i]) return;
     if (mode === 'cpu' && turn !== 'X') return;
-    try { navigator.vibrate && navigator.vibrate(12); } catch (e) {}
+    if (mode === 'net' && !myTurnOnline()) return;
+    buzz();
+    var mark = turn;
     place(i);
+    if (mode === 'net') send({ t: 'move', i: i, m: mark });
     if (!over && mode === 'cpu') cpuTurn();
   }
 
+  /* ---------- Online play: relayed through ntfy.sh topics, keyed by the room code ---------- */
+  function genCode() {
+    var A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', s = '';
+    for (var k = 0; k < 5; k++) s += A[Math.floor(Math.random() * A.length)];
+    return s;
+  }
+  function send(msg) {
+    if (!net.code) return;
+    msg.from = net.id;
+    try {
+      fetch(RELAY + net.code, { method: 'POST', body: JSON.stringify(msg), keepalive: true })
+        .catch(function () { setStatus('Connection problem. Check your internet.'); });
+    } catch (e) {}
+  }
+  function snapshot() { return { t: 'state', board: board, turn: turn, over: over, score: score, starter: starter }; }
+  function applyState(s) {
+    board = s.board; turn = s.turn; over = s.over; score = s.score; starter = s.starter; busy = false;
+    clearWin(); render();
+    var w = winnerOf(board);
+    if (w) { showWin(w); drawWin(w.line); cells.forEach(function (c, k) { c.classList.toggle('dim', w.line.indexOf(k) < 0); }); }
+    else if (over) setStatus("It's a draw");
+    else announceTurn();
+  }
+  function handle(m) {
+    if (!m || m.from === net.id || !net.code) return;
+    if (m.t === 'join' && net.me === 'X') {
+      net.peer = true; send(snapshot()); render(); netStatus(); roomHint();
+    } else if (m.t === 'state' && net.me === 'O') {
+      net.peer = true; clearInterval(net.timer); applyState(m); roomHint();
+    } else if (m.t === 'move' && net.peer && !over && board[m.i] === null && turn === m.m && m.m !== net.me) {
+      buzz(); place(m.i);
+    } else if (m.t === 'new' && net.peer) {
+      starter = m.turn; resetBoard(); starter = m.next; render(); announceTurn();
+    } else if (m.t === 'reset' && net.peer) {
+      score = { X: 0, O: 0, D: 0 }; starter = 'X'; resetBoard(); starter = 'O'; render(); announceTurn();
+    } else if (m.t === 'bye') {
+      net.peer = false; render(); setStatus('Your friend left the room'); roomHint();
+    }
+  }
+  function connect() {
+    disconnect(true);
+    net.es = new EventSource(RELAY + net.code + '/sse');
+    net.es.onmessage = function (ev) {
+      try {
+        var d = JSON.parse(ev.data);
+        if (d.event === 'message') handle(JSON.parse(d.message));
+      } catch (e) {}
+    };
+    net.es.onopen = function () { if (net.me === 'O' && !net.peer) startJoin(); roomHint(); };
+    net.es.onerror = function () { if (!net.peer) setStatus('Connecting…'); };
+  }
+  function startJoin() {
+    clearInterval(net.timer);
+    var tries = 0;
+    var go = function () {
+      if (net.peer || ++tries > 20) { clearInterval(net.timer); if (!net.peer) setStatus('Room not found or host is offline'); return; }
+      send({ t: 'join' });
+    };
+    go(); net.timer = setInterval(go, 3000);
+  }
+  function disconnect(keepRoom) {
+    clearInterval(net.timer);
+    if (net.es) { net.es.close(); net.es = null; }
+    if (!keepRoom) { net.code = null; net.me = null; net.peer = false; }
+  }
+  function roomHint() {
+    if (!net.code) return;
+    $('roomhint').textContent = net.peer ? 'Friend connected. You are ' + net.me + '.'
+      : net.me === 'X' ? 'Send the invite link or code to your friend. You play X.' : 'Joining room… You play O.';
+  }
+  function showRoom(on) {
+    $('net-start').hidden = on; $('net-room').hidden = !on;
+    if (on) { $('roomcode').textContent = net.code; roomHint(); }
+  }
+  function createRoom() {
+    disconnect(); net.code = genCode(); net.me = 'X'; net.peer = false;
+    score = { X: 0, O: 0, D: 0 }; starter = 'X'; resetBoard(); starter = 'O';
+    showRoom(true); connect(); render(); netStatus();
+  }
+  function joinRoom(code) {
+    code = (code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length !== 5) { setStatus('Enter the 5-character room code'); return; }
+    disconnect(); net.code = code; net.me = 'O'; net.peer = false;
+    resetBoard(); showRoom(true); connect(); render(); netStatus();
+  }
+  function leaveRoom() {
+    if (net.code && net.peer) send({ t: 'bye' });
+    disconnect(); showRoom(false); resetBoard(); render(); netStatus();
+  }
+  function inviteLink() {
+    return location.origin + location.pathname + '?room=' + net.code;
+  }
+  function share() {
+    var url = inviteLink(), text = 'Play Tic Tac Toe with me. Room code ' + net.code;
+    if (navigator.share) {
+      navigator.share({ title: 'Tic Tac Toe', text: text, url: url }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(text + ' ' + url).then(function () { $('roomhint').textContent = 'Invite link copied.'; }, function () { $('roomhint').textContent = url; });
+    } else { $('roomhint').textContent = url; }
+  }
+
   function setMode(m) {
+    if (mode === 'net' && m !== 'net') leaveRoom();
     mode = m;
     $('m-cpu').setAttribute('aria-pressed', m === 'cpu');
     $('m-two').setAttribute('aria-pressed', m === 'two');
-    $('diffrow').style.display = m === 'cpu' ? '' : 'none';
-    score = { X: 0, O: 0, D: 0 }; starter = 'X'; newRound();
+    $('m-net').setAttribute('aria-pressed', m === 'net');
+    $('diffrow').hidden = m !== 'cpu';
+    $('netpanel').hidden = m !== 'net';
+    score = { X: 0, O: 0, D: 0 }; starter = 'X';
+    if (m === 'net') { resetBoard(); render(); netStatus(); } else newRound();
   }
   function setLevel(l) {
     level = l;
     $('d-easy').setAttribute('aria-pressed', l === 'easy');
     $('d-hard').setAttribute('aria-pressed', l === 'hard');
   }
+  function again() {
+    if (mode === 'net') {
+      if (!net.peer) return;
+      resetBoard(); starter = turn === 'X' ? 'O' : 'X';
+      render(); announceTurn();
+      send({ t: 'new', turn: turn, next: starter });
+      return;
+    }
+    newRound();
+  }
+  function resetScores() {
+    if (mode === 'net') {
+      if (!net.peer) return;
+      score = { X: 0, O: 0, D: 0 }; starter = 'X'; resetBoard(); starter = 'O'; render(); announceTurn();
+      send({ t: 'reset' }); return;
+    }
+    score = { X: 0, O: 0, D: 0 }; starter = 'X'; newRound();
+  }
+
   $('m-cpu').onclick = function () { setMode('cpu'); };
   $('m-two').onclick = function () { setMode('two'); };
+  $('m-net').onclick = function () { setMode('net'); };
   $('d-easy').onclick = function () { setLevel('easy'); };
   $('d-hard').onclick = function () { setLevel('hard'); };
-  $('again').onclick = newRound;
-  $('reset').onclick = function () { score = { X: 0, O: 0, D: 0 }; starter = 'X'; newRound(); };
+  $('again').onclick = again;
+  $('reset').onclick = resetScores;
+  $('create').onclick = createRoom;
+  $('join').onclick = function () { joinRoom($('codein').value); };
+  $('codein').addEventListener('keydown', function (e) { if (e.key === 'Enter') joinRoom(this.value); });
+  $('share').onclick = share;
+  $('leave').onclick = leaveRoom;
+  window.addEventListener('pagehide', function () { if (net.code && net.peer) send({ t: 'bye' }); });
 
   newRound();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function(){});
+  try {
+    var room = new URLSearchParams(location.search).get('room');
+    if (room) { setMode('net'); joinRoom(room); }
+  } catch (e) {}
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
 })();
 </script>
 </body>
